@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -27,9 +28,11 @@ app = FastAPI(title="packet-mapper", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _clients: set[WebSocket] = set()
+_clients_lock: asyncio.Lock = asyncio.Lock()
 # Key: interface name, or "" for the default/all-interface capture
 _captures: dict[str, PacketCapture] = {}
 _connections: collections.deque = collections.deque(maxlen=10_000)
+_connections_lock: threading.Lock = threading.Lock()
 
 
 def _iface_key(interface: str | None) -> str:
@@ -72,7 +75,9 @@ async def index():
 
 @app.get("/health")
 async def health():
-    flagged = sum(1 for r in list(_connections) if r.get("is_flagged"))
+    with _connections_lock:
+        connections_snapshot = list(_connections)
+    flagged = sum(1 for r in connections_snapshot if r.get("is_flagged"))
     active = [k if k else "default" for k, v in _captures.items() if v._running]
     return {"status": "ok", "clients": len(_clients), "flagged_connections": flagged, "active_interfaces": active}
 
@@ -80,7 +85,8 @@ async def health():
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
-    _clients.add(ws)
+    async with _clients_lock:
+        _clients.add(ws)
     logger.info("WS client connected (%d total)", len(_clients))
     try:
         while True:
@@ -89,18 +95,23 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         pass
     finally:
-        _clients.discard(ws)
+        async with _clients_lock:
+            _clients.discard(ws)
         logger.info("WS client disconnected (%d total)", len(_clients))
 
 
 async def _broadcast(data: dict) -> None:
+    async with _clients_lock:
+        clients = set(_clients)
     dead: set[WebSocket] = set()
-    for ws in list(_clients):
+    for ws in clients:
         try:
             await ws.send_text(json.dumps(data))
         except Exception:
             dead.add(ws)
-    _clients -= dead
+    if dead:
+        async with _clients_lock:
+            _clients -= dead
 
 
 def _make_on_connection(interface: str | None):
@@ -134,16 +145,17 @@ def _make_on_connection(interface: str | None):
             "dst_threat": dst_threat.as_dict() if dst_threat else None,
         }
 
-        _connections.append({
-            "timestamp": ts,
-            "interface": iface_name,
-            "connection": conn,
-            "src_geo": src_geo,
-            "dst_geo": dst_geo,
-            "src_threat": src_threat,
-            "dst_threat": dst_threat,
-            "is_flagged": is_flagged,
-        })
+        with _connections_lock:
+            _connections.append({
+                "timestamp": ts,
+                "interface": iface_name,
+                "connection": conn,
+                "src_geo": src_geo,
+                "dst_geo": dst_geo,
+                "src_threat": src_threat,
+                "dst_threat": dst_threat,
+                "is_flagged": is_flagged,
+            })
 
         loop = asyncio.get_event_loop()
         if loop.is_running():
@@ -191,8 +203,10 @@ async def stop_capture(request: Request):
 
 @app.get("/api/timeline")
 async def get_timeline():
+    with _connections_lock:
+        connections_snapshot = list(_connections)
     records = []
-    for record in list(_connections):
+    for record in connections_snapshot:
         conn = record["connection"]
         src_geo = record["src_geo"]
         dst_geo = record["dst_geo"]
@@ -241,7 +255,9 @@ async def export_csv():
     writer.writerow(
         ["timestamp", "src_ip", "dst_ip", "protocol", "src_port", "dst_port", "country", "city", "hostname"]
     )
-    for record in list(_connections):
+    with _connections_lock:
+        connections_snapshot = list(_connections)
+    for record in connections_snapshot:
         conn = record["connection"]
         dst_geo = record["dst_geo"]
         ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record["timestamp"]))
