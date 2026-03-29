@@ -55,6 +55,50 @@ def test_lookup_public_failure_returns_none():
     assert loc is None
 
 
+def test_geo_cache_ttl_expiry():
+    """Cached geo entries are evicted after TTL expires."""
+    from packet_mapper import geo
+    from packet_mapper._cache import TTL
+
+    ip = "11.22.33.44"
+    geo._GEO_CACHE.pop(ip, None)
+    mock_response = {
+        "status": "success",
+        "lat": 1.0,
+        "lon": 2.0,
+        "city": "Test",
+        "country": "Testland",
+        "isp": "TestISP",
+    }
+    with patch("packet_mapper._cache.time.monotonic") as mock_mono:
+        mock_mono.return_value = 0.0
+        with patch("packet_mapper.geo.requests.get") as mock_get:
+            mock_get.return_value.json.return_value = mock_response
+            loc = lookup(ip)
+        assert loc is not None
+
+        mock_mono.return_value = TTL - 1  # still within TTL
+        assert ip in geo._GEO_CACHE
+
+        mock_mono.return_value = TTL + 1  # past TTL
+        assert ip not in geo._GEO_CACHE
+
+
+def test_geo_cache_max_size():
+    """Cache evicts the oldest entry when max_size is exceeded."""
+    from packet_mapper._cache import _BoundedCache
+
+    cache = _BoundedCache(max_size=3)
+    cache["a"] = "val_a"
+    cache["b"] = "val_b"
+    cache["c"] = "val_c"
+    cache["d"] = "val_d"  # should evict "a"
+
+    assert len(cache._store) == 3
+    assert "a" not in cache._store
+    assert cache["d"] == "val_d"
+
+
 def test_geo_location_as_dict():
     loc = GeoLocation(ip="8.8.8.8", lat=37.4, lon=-122.1, city="MV", country="US", isp="Google")
     d = loc.as_dict()
