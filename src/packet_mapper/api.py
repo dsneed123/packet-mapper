@@ -11,7 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -27,8 +27,42 @@ app = FastAPI(title="packet-mapper", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _clients: set[WebSocket] = set()
-_capture: PacketCapture | None = None
+# Key: interface name, or "" for the default/all-interface capture
+_captures: dict[str, PacketCapture] = {}
 _connections: collections.deque = collections.deque(maxlen=10_000)
+
+
+def _iface_key(interface: str | None) -> str:
+    return interface or ""
+
+
+def _list_interfaces() -> list[dict]:
+    """Return available system network interfaces with capture status."""
+    try:
+        from scapy.interfaces import get_if_list
+        names = get_if_list()
+    except Exception:
+        import socket
+        names = [name for _, name in socket.if_nameindex()]
+
+    default_capturing = "" in _captures and _captures[""]._running
+    result = []
+    for name in names:
+        ip = None
+        try:
+            from scapy.interfaces import get_if_addr
+            addr = get_if_addr(name)
+            if addr and addr != "0.0.0.0":
+                ip = addr
+        except Exception:
+            pass
+        specific_capturing = name in _captures and _captures[name]._running
+        result.append({
+            "name": name,
+            "ip": ip,
+            "capturing": specific_capturing or default_capturing,
+        })
+    return result
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -39,7 +73,8 @@ async def index():
 @app.get("/health")
 async def health():
     flagged = sum(1 for r in list(_connections) if r.get("is_flagged"))
-    return {"status": "ok", "clients": len(_clients), "flagged_connections": flagged}
+    active = [k if k else "default" for k, v in _captures.items() if v._running]
+    return {"status": "ok", "clients": len(_clients), "flagged_connections": flagged, "active_interfaces": active}
 
 
 @app.websocket("/ws")
@@ -68,45 +103,90 @@ async def _broadcast(data: dict) -> None:
     _clients -= dead
 
 
-def _on_connection(conn: Connection) -> None:
-    """Called from the capture thread; schedule a broadcast on the event loop."""
-    src_geo = lookup(conn.src_ip)
-    dst_geo = lookup(conn.dst_ip)
+def _make_on_connection(interface: str | None):
+    """Return a connection callback bound to a specific interface."""
+    iface_name = interface or "default"
 
-    # Skip if both endpoints are private/unresolvable
-    if (src_geo is None or src_geo.is_private) and (dst_geo is None or dst_geo.is_private):
-        return
+    def _on_connection(conn: Connection) -> None:
+        """Called from the capture thread; schedule a broadcast on the event loop."""
+        src_geo = lookup(conn.src_ip)
+        dst_geo = lookup(conn.dst_ip)
 
-    src_threat = threat_check(conn.src_ip)
-    dst_threat = threat_check(conn.dst_ip)
-    is_flagged = bool(
-        (src_threat and src_threat.is_flagged) or (dst_threat and dst_threat.is_flagged)
-    )
+        # Skip if both endpoints are private/unresolvable
+        if (src_geo is None or src_geo.is_private) and (dst_geo is None or dst_geo.is_private):
+            return
 
-    ts = time.time()
-    payload = {
-        "type": "connection",
-        "timestamp": ts,
-        "connection": conn.as_dict(),
-        "src_geo": src_geo.as_dict() if src_geo else None,
-        "dst_geo": dst_geo.as_dict() if dst_geo else None,
-        "src_threat": src_threat.as_dict() if src_threat else None,
-        "dst_threat": dst_threat.as_dict() if dst_threat else None,
-    }
+        src_threat = threat_check(conn.src_ip)
+        dst_threat = threat_check(conn.dst_ip)
+        is_flagged = bool(
+            (src_threat and src_threat.is_flagged) or (dst_threat and dst_threat.is_flagged)
+        )
 
-    _connections.append({
-        "timestamp": ts,
-        "connection": conn,
-        "src_geo": src_geo,
-        "dst_geo": dst_geo,
-        "src_threat": src_threat,
-        "dst_threat": dst_threat,
-        "is_flagged": is_flagged,
-    })
+        ts = time.time()
+        payload = {
+            "type": "connection",
+            "timestamp": ts,
+            "interface": iface_name,
+            "connection": conn.as_dict(),
+            "src_geo": src_geo.as_dict() if src_geo else None,
+            "dst_geo": dst_geo.as_dict() if dst_geo else None,
+            "src_threat": src_threat.as_dict() if src_threat else None,
+            "dst_threat": dst_threat.as_dict() if dst_threat else None,
+        }
 
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        asyncio.run_coroutine_threadsafe(_broadcast(payload), loop)
+        _connections.append({
+            "timestamp": ts,
+            "interface": iface_name,
+            "connection": conn,
+            "src_geo": src_geo,
+            "dst_geo": dst_geo,
+            "src_threat": src_threat,
+            "dst_threat": dst_threat,
+            "is_flagged": is_flagged,
+        })
+
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.run_coroutine_threadsafe(_broadcast(payload), loop)
+
+    return _on_connection
+
+
+@app.get("/api/interfaces")
+async def get_interfaces():
+    return JSONResponse(_list_interfaces())
+
+
+@app.post("/api/capture/start")
+async def start_capture(request: Request):
+    data = await request.json()
+    interface = data.get("interface") or None
+    key = _iface_key(interface)
+
+    if key in _captures and _captures[key]._running:
+        return JSONResponse({"status": "already_running", "interface": interface})
+
+    capture = PacketCapture(interface=interface)
+    capture.add_callback(_make_on_connection(interface))
+    capture.start()
+    _captures[key] = capture
+    logger.info("Capture started via API on interface: %s", interface or "default")
+    return JSONResponse({"status": "started", "interface": interface})
+
+
+@app.post("/api/capture/stop")
+async def stop_capture(request: Request):
+    data = await request.json()
+    interface = data.get("interface") or None
+    key = _iface_key(interface)
+
+    capture = _captures.pop(key, None)
+    if not capture:
+        return JSONResponse({"status": "not_running", "interface": interface})
+
+    capture.stop()
+    logger.info("Capture stopped via API on interface: %s", interface or "default")
+    return JSONResponse({"status": "stopped", "interface": interface})
 
 
 @app.get("/api/timeline")
@@ -121,6 +201,7 @@ async def get_timeline():
         records.append({
             "timestamp": record["timestamp"],
             "type": "connection",
+            "interface": record.get("interface", "default"),
             "connection": conn.as_dict(),
             "src_geo": src_geo.as_dict() if src_geo else None,
             "dst_geo": dst_geo.as_dict() if dst_geo else None,
@@ -132,17 +213,19 @@ async def get_timeline():
 
 @app.get("/api/export/pcap")
 async def export_pcap(background_tasks: BackgroundTasks):
-    if _capture is None:
+    if not _captures:
         return JSONResponse({"error": "capture not started"}, status_code=503)
-    packets = _capture.get_packets()
-    if not packets:
+    all_packets = []
+    for capture in _captures.values():
+        all_packets.extend(capture.get_packets())
+    if not all_packets:
         return JSONResponse({"error": "no packets captured yet"}, status_code=404)
 
     from scapy.utils import wrpcap
 
     with tempfile.NamedTemporaryFile(suffix=".pcap", delete=False) as f:
         tmp_path = f.name
-    wrpcap(tmp_path, packets)
+    wrpcap(tmp_path, all_packets)
     background_tasks.add_task(os.unlink, tmp_path)
     return FileResponse(
         tmp_path,
@@ -183,14 +266,17 @@ async def export_csv():
 
 @app.on_event("startup")
 async def startup():
-    global _capture
-    interface = os.environ.get("PACKET_MAPPER_IFACE")  # None = default interface
-    _capture = PacketCapture(interface=interface)
-    _capture.add_callback(_on_connection)
-    _capture.start()
+    global _captures
+    interface = os.environ.get("PACKET_MAPPER_IFACE") or None
+    key = _iface_key(interface)
+    capture = PacketCapture(interface=interface)
+    capture.add_callback(_make_on_connection(interface))
+    capture.start()
+    _captures[key] = capture
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    if _capture:
-        _capture.stop()
+    for capture in list(_captures.values()):
+        capture.stop()
+    _captures.clear()
