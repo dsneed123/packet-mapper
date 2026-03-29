@@ -19,6 +19,37 @@
   <div id="map"></div>
 
   <aside id="sidebar">
+    <section id="stats-panel">
+      <div id="stats-summary">
+        <div class="stat-box">
+          <span class="stat-val" id="stat-total">0</span>
+          <span class="stat-lbl">packets</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-val" id="stat-rate">0</span>
+          <span class="stat-lbl">pkt/s</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-val" id="stat-bw">—</span>
+          <span class="stat-lbl">est. bw</span>
+        </div>
+      </div>
+      <div class="stats-section">
+        <h3 class="stats-heading">Protocols</h3>
+        <div class="proto-chart">
+          <svg id="proto-pie" viewBox="0 0 100 100" width="84" height="84"></svg>
+          <div id="proto-legend"></div>
+        </div>
+      </div>
+      <div class="stats-section">
+        <h3 class="stats-heading">Top Countries</h3>
+        <div id="countries-bars"></div>
+      </div>
+      <div class="stats-section">
+        <h3 class="stats-heading">Top IPs</h3>
+        <div id="ips-bars"></div>
+      </div>
+    </section>
     <h2>Recent Connections</h2>
     <ul id="conn-list"></ul>
   </aside>
