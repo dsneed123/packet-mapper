@@ -418,6 +418,61 @@ async function loadTimeline() {
   }
 }
 
+// Interface management
+
+const ifaceSelect = document.getElementById('iface-select');
+
+async function loadInterfaces() {
+  try {
+    const resp = await fetch('/api/interfaces');
+    if (!resp.ok) return;
+    const interfaces = await resp.json();
+    const prev = ifaceSelect.value;
+    ifaceSelect.innerHTML = '';
+    for (const iface of interfaces) {
+      const opt = document.createElement('option');
+      opt.value = iface.name;
+      const ip = iface.ip ? ` (${iface.ip})` : '';
+      opt.textContent = `${iface.name}${ip}`;
+      opt.dataset.capturing = iface.capturing ? 'true' : 'false';
+      if (iface.name === prev) opt.selected = true;
+      ifaceSelect.appendChild(opt);
+    }
+    updateIfaceButton();
+  } catch (e) {
+    console.warn('Failed to load interfaces', e);
+  }
+}
+
+function updateIfaceButton() {
+  const btn = document.getElementById('btn-iface-toggle');
+  if (!btn || !ifaceSelect.options.length) return;
+  const selected = ifaceSelect.options[ifaceSelect.selectedIndex];
+  const capturing = selected && selected.dataset.capturing === 'true';
+  btn.textContent = capturing ? 'Stop' : 'Start';
+  btn.classList.toggle('active', capturing);
+}
+
+ifaceSelect.addEventListener('change', updateIfaceButton);
+
+async function toggleInterfaceCapture() {
+  const iface = ifaceSelect.value;
+  if (!iface) return;
+  const btn = document.getElementById('btn-iface-toggle');
+  const capturing = btn.textContent === 'Stop';
+  const endpoint = capturing ? '/api/capture/stop' : '/api/capture/start';
+  try {
+    await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ interface: iface }),
+    });
+    await loadInterfaces();
+  } catch (e) {
+    console.warn('Failed to toggle capture', e);
+  }
+}
+
 // WebSocket
 let ws;
 let reconnectDelay = 1000;
@@ -451,3 +506,4 @@ function connect() {
 
 connect();
 loadTimeline();
+loadInterfaces();

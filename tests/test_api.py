@@ -110,3 +110,76 @@ def test_export_csv_with_data(client_with_data):
     assert "5.6.7.8" in lines[1]
     assert "London" in lines[1]
     assert "GB" in lines[1]
+
+
+def test_interfaces_endpoint(client):
+    """GET /api/interfaces returns a list of interfaces with capturing status."""
+    with patch("packet_mapper.api._list_interfaces") as mock_list:
+        mock_list.return_value = [
+            {"name": "eth0", "ip": "192.168.1.1", "capturing": True},
+            {"name": "lo", "ip": "127.0.0.1", "capturing": False},
+        ]
+        resp = client.get("/api/interfaces")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert data[0]["name"] == "eth0"
+    assert data[0]["capturing"] is True
+    assert data[1]["name"] == "lo"
+    assert data[1]["capturing"] is False
+
+
+def test_stop_nonexistent_capture(client):
+    """Stopping a capture that isn't running returns not_running."""
+    resp = client.post("/api/capture/stop", json={"interface": "eth99"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "not_running"
+    assert resp.json()["interface"] == "eth99"
+
+
+def test_start_and_stop_capture(client):
+    """Starting a new capture and then stopping it returns expected statuses."""
+    with patch("packet_mapper.api.PacketCapture") as MockCapture:
+        instance = MagicMock()
+        instance._running = True
+        MockCapture.return_value = instance
+
+        start_resp = client.post("/api/capture/start", json={"interface": "eth0"})
+        assert start_resp.status_code == 200
+        assert start_resp.json()["status"] == "started"
+        assert start_resp.json()["interface"] == "eth0"
+
+        stop_resp = client.post("/api/capture/stop", json={"interface": "eth0"})
+        assert stop_resp.status_code == 200
+        assert stop_resp.json()["status"] == "stopped"
+        assert stop_resp.json()["interface"] == "eth0"
+
+
+def test_start_already_running(client):
+    """Starting a capture on an already-active interface returns already_running."""
+    import packet_mapper.api as api_mod
+
+    with patch("packet_mapper.api.PacketCapture") as MockCapture:
+        instance = MagicMock()
+        instance._running = True
+        MockCapture.return_value = instance
+
+        # Pre-populate _captures to simulate a running capture
+        api_mod._captures["eth0"] = instance
+
+        resp = client.post("/api/capture/start", json={"interface": "eth0"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "already_running"
+
+    # Clean up
+    api_mod._captures.pop("eth0", None)
+
+
+def test_health_includes_active_interfaces(client):
+    """Health endpoint reports active interface names."""
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "active_interfaces" in data
+    assert isinstance(data["active_interfaces"], list)

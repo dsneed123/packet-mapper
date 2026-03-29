@@ -10,6 +10,11 @@
 <body>
   <header>
     <h1>packet-mapper</h1>
+    <div id="interface-controls">
+      <label for="iface-select">Interface:</label>
+      <select id="iface-select"><option value="">Loading…</option></select>
+      <button id="btn-iface-toggle" class="view-btn" onclick="toggleInterfaceCapture()">Start</button>
+    </div>
     <div id="view-toggle">
       <button id="btn-lines" class="view-btn active" onclick="setViewMode('lines')">Lines</button>
       <button id="btn-heatmap" class="view-btn" onclick="setViewMode('heatmap')">Heat Map</button>

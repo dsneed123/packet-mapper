@@ -23,6 +23,21 @@ header {
 
 header h1 { font-size: 1rem; font-weight: 600; color: #58a6ff; }
 
+#interface-controls { display: flex; align-items: center; gap: 0.25rem; }
+
+#interface-controls label { font-size: 0.72rem; color: #8b949e; white-space: nowrap; }
+
+#iface-select {
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  font-size: 0.72rem;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  max-width: 160px;
+}
+
 #view-toggle { display: flex; align-items: center; gap: 0.25rem; margin-left: auto; }
 
 #export-controls { display: flex; align-items: center; gap: 0.25rem; }
