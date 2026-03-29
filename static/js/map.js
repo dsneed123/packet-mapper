@@ -47,14 +47,46 @@ function lineOpacity(count) {
   return Math.min(0.5 + count * 0.04, 0.95);
 }
 
-function makeMarker(lat, lon, label) {
-  return L.circleMarker([lat, lon], {
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function markerTooltipLabel(geo) {
+  const location = geo.city || geo.country || '';
+  if (geo.hostname) return `${geo.hostname} (${geo.ip})`;
+  return location ? `${geo.ip} (${location})` : geo.ip;
+}
+
+function buildWhoisPopup(geo) {
+  const rows = [
+    ['IP', geo.ip],
+    geo.hostname ? ['Hostname', geo.hostname] : null,
+    geo.city     ? ['City',     geo.city]     : null,
+    geo.country  ? ['Country',  geo.country]  : null,
+    geo.isp      ? ['ISP',      geo.isp]      : null,
+  ].filter(Boolean);
+
+  const tbody = rows
+    .map(([k, v]) => `<tr><td class="wk">${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`)
+    .join('');
+  return `<table class="whois-popup"><tbody>${tbody}</tbody></table>`;
+}
+
+function makeMarker(lat, lon, geo) {
+  const marker = L.circleMarker([lat, lon], {
     radius: 5,
     color: '#58a6ff',
     fillColor: '#58a6ff',
     fillOpacity: 0.8,
     weight: 1,
-  }).bindTooltip(label, { permanent: false });
+  }).bindTooltip(markerTooltipLabel(geo), { permanent: false });
+
+  marker.bindPopup(buildWhoisPopup(geo), { className: 'whois-leaflet-popup' });
+  return marker;
 }
 
 function scheduleFade(key) {
@@ -138,8 +170,8 @@ function addConnection(data) {
       if (viewMode === 'heatmap') rebuildHeatLayer();
     }
 
-    if (src && !src.is_private) makeMarker(src.lat, src.lon, `${src.ip} (${src.city || src.country})`).addTo(map);
-    if (dst && !dst.is_private) makeMarker(dst.lat, dst.lon, `${dst.ip} (${dst.city || dst.country})`).addTo(map);
+    if (src && !src.is_private) makeMarker(src.lat, src.lon, src).addTo(map);
+    if (dst && !dst.is_private) makeMarker(dst.lat, dst.lon, dst).addTo(map);
   }
 
   // Sidebar entry
@@ -147,9 +179,15 @@ function addConnection(data) {
   countEl.textContent = `${totalConns} connections`;
 
   const li = document.createElement('li');
-  const dstLabel = dst ? `${dst.ip} <span class="country">${dst.country}</span>` : conn.dst_ip;
-  const extra = conn.dns_query ? ` ${conn.dns_query}` : (conn.http_host ? ` ${conn.http_host}` : '');
-  li.innerHTML = `<span class="proto" style="color:${protocolColor(conn.protocol)}">${conn.protocol}</span> ${conn.src_ip} → ${dstLabel}${extra}`;
+  const dstName = dst ? (dst.hostname || dst.ip) : conn.dst_ip;
+  const dstLabel = dst
+    ? `${escapeHtml(dstName)} <span class="country">${escapeHtml(dst.country)}</span>`
+    : escapeHtml(conn.dst_ip);
+  const srcName = escapeHtml(conn.src_ip);
+  const extra = conn.dns_query
+    ? ` <span class="hostname">${escapeHtml(conn.dns_query)}</span>`
+    : (conn.http_host ? ` <span class="hostname">${escapeHtml(conn.http_host)}</span>` : '');
+  li.innerHTML = `<span class="proto" style="color:${protocolColor(conn.protocol)}">${conn.protocol}</span> ${srcName} → ${dstLabel}${extra}`;
   listEl.prepend(li);
 
   while (listEl.children.length > MAX_LIST) {

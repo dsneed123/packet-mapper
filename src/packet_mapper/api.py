@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .capture import Connection, PacketCapture
+from .dns import reverse_lookup
 from .geo import lookup
 
 logger = logging.getLogger(__name__)
@@ -69,11 +70,19 @@ def _on_connection(conn: Connection) -> None:
     if (src_geo is None or src_geo.is_private) and (dst_geo is None or dst_geo.is_private):
         return
 
+    src_dict = src_geo.as_dict() if src_geo else None
+    dst_dict = dst_geo.as_dict() if dst_geo else None
+
+    if src_dict and not src_dict["is_private"]:
+        src_dict["hostname"] = reverse_lookup(conn.src_ip) or ""
+    if dst_dict and not dst_dict["is_private"]:
+        dst_dict["hostname"] = reverse_lookup(conn.dst_ip) or ""
+
     payload = {
         "type": "connection",
         "connection": conn.as_dict(),
-        "src_geo": src_geo.as_dict() if src_geo else None,
-        "dst_geo": dst_geo.as_dict() if dst_geo else None,
+        "src_geo": src_dict,
+        "dst_geo": dst_dict,
     }
 
     loop = asyncio.get_event_loop()
