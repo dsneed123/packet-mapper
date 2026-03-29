@@ -77,5 +77,40 @@ header h1 { font-size: 1rem; font-weight: 600; color: #58a6ff; }
   line-height: 1.4;
 }
 
-#conn-list li .proto { color: #58a6ff; font-weight: 600; }
-#conn-list li .country { color: #3fb950; }
+#conn-list li .proto    { color: #58a6ff; font-weight: 600; }
+#conn-list li .country  { color: #3fb950; }
+#conn-list li .hostname { color: #a5d6ff; font-style: italic; }
+
+/* Leaflet popup — dark theme override */
+.whois-leaflet-popup .leaflet-popup-content-wrapper,
+.whois-leaflet-popup .leaflet-popup-tip {
+  background: #161b22;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+
+.whois-leaflet-popup .leaflet-popup-close-button {
+  color: #8b949e;
+}
+.whois-leaflet-popup .leaflet-popup-close-button:hover {
+  color: #c9d1d9;
+}
+
+.whois-popup {
+  font-size: 0.75rem;
+  border-collapse: collapse;
+  min-width: 180px;
+}
+
+.whois-popup td {
+  padding: 3px 6px;
+  vertical-align: top;
+}
+
+.whois-popup .wk {
+  color: #8b949e;
+  font-weight: 600;
+  white-space: nowrap;
+  padding-right: 10px;
+}
