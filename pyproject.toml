@@ -13,6 +13,7 @@ dependencies = [
     "scapy>=2.5.0",
     "requests>=2.32.0",
     "websockets>=12.0",
+    "geoip2>=4.6.0",
 ]
 
 [project.scripts]
