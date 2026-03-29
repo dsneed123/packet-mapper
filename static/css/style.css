@@ -25,6 +25,22 @@ header h1 { font-size: 1rem; font-weight: 600; color: #58a6ff; }
 
 #view-toggle { display: flex; align-items: center; gap: 0.25rem; margin-left: auto; }
 
+#export-controls { display: flex; align-items: center; gap: 0.25rem; }
+
+.export-btn {
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+.export-btn:hover { background: #30363d; color: #c9d1d9; }
+
 .view-btn {
   background: #21262d;
   border: 1px solid #30363d;

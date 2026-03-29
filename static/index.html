@@ -14,6 +14,10 @@
       <button id="btn-lines" class="view-btn active" onclick="setViewMode('lines')">Lines</button>
       <button id="btn-heatmap" class="view-btn" onclick="setViewMode('heatmap')">Heat Map</button>
     </div>
+    <div id="export-controls">
+      <a href="/api/export/pcap" class="export-btn">Export PCAP</a>
+      <a href="/api/export/csv" class="export-btn">Export CSV</a>
+    </div>
     <div id="status">
       <span id="ws-status" class="badge disconnected">disconnected</span>
       <span id="conn-count">0 connections</span>

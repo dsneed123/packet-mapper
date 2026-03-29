@@ -1,13 +1,18 @@
 """FastAPI application: serves the UI and broadcasts connections via WebSocket."""
 
 import asyncio
+import collections
+import csv
+import io
 import json
 import logging
 import os
+import tempfile
+import time
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import BackgroundTasks, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .capture import Connection, PacketCapture
@@ -22,6 +27,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _clients: set[WebSocket] = set()
 _capture: PacketCapture | None = None
+_connections: collections.deque = collections.deque(maxlen=10_000)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -76,9 +82,67 @@ def _on_connection(conn: Connection) -> None:
         "dst_geo": dst_geo.as_dict() if dst_geo else None,
     }
 
+    _connections.append({
+        "timestamp": time.time(),
+        "connection": conn,
+        "src_geo": src_geo,
+        "dst_geo": dst_geo,
+    })
+
     loop = asyncio.get_event_loop()
     if loop.is_running():
         asyncio.run_coroutine_threadsafe(_broadcast(payload), loop)
+
+
+@app.get("/api/export/pcap")
+async def export_pcap(background_tasks: BackgroundTasks):
+    if _capture is None:
+        return JSONResponse({"error": "capture not started"}, status_code=503)
+    packets = _capture.get_packets()
+    if not packets:
+        return JSONResponse({"error": "no packets captured yet"}, status_code=404)
+
+    from scapy.utils import wrpcap
+
+    with tempfile.NamedTemporaryFile(suffix=".pcap", delete=False) as f:
+        tmp_path = f.name
+    wrpcap(tmp_path, packets)
+    background_tasks.add_task(os.unlink, tmp_path)
+    return FileResponse(
+        tmp_path,
+        media_type="application/vnd.tcpdump.pcap",
+        filename="capture.pcap",
+    )
+
+
+@app.get("/api/export/csv")
+async def export_csv():
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        ["timestamp", "src_ip", "dst_ip", "protocol", "src_port", "dst_port", "country", "city", "hostname"]
+    )
+    for record in list(_connections):
+        conn = record["connection"]
+        dst_geo = record["dst_geo"]
+        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record["timestamp"]))
+        writer.writerow([
+            ts,
+            conn.src_ip,
+            conn.dst_ip,
+            conn.protocol,
+            conn.src_port if conn.src_port is not None else "",
+            conn.dst_port if conn.dst_port is not None else "",
+            dst_geo.country if dst_geo else "",
+            dst_geo.city if dst_geo else "",
+            conn.dns_query or conn.http_host or "",
+        ])
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=connections.csv"},
+    )
 
 
 @app.on_event("startup")

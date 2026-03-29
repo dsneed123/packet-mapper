@@ -1,9 +1,12 @@
 """Packet capture using scapy, emitting connection events."""
 
+import collections
 import logging
 import threading
 from dataclasses import dataclass
 from typing import Callable, Optional
+
+_MAX_STORED_PACKETS = 10_000
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +78,17 @@ class PacketCapture:
         self._callbacks: list[ConnectionCallback] = []
         self._thread: Optional[threading.Thread] = None
         self._running = False
+        self._packets: collections.deque = collections.deque(maxlen=_MAX_STORED_PACKETS)
 
     def add_callback(self, cb: ConnectionCallback) -> None:
         self._callbacks.append(cb)
 
+    def get_packets(self) -> list:
+        """Return a snapshot of stored raw packets for export."""
+        return list(self._packets)
+
     def _handle_packet(self, pkt) -> None:
+        self._packets.append(pkt)
         try:
             from scapy.layers.dns import DNS
             from scapy.layers.inet import ICMP, IP, TCP, UDP
