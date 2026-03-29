@@ -10,6 +10,10 @@
 <body>
   <header>
     <h1>packet-mapper</h1>
+    <div id="view-toggle">
+      <button id="btn-lines" class="view-btn active" onclick="setViewMode('lines')">Lines</button>
+      <button id="btn-heatmap" class="view-btn" onclick="setViewMode('heatmap')">Heat Map</button>
+    </div>
     <div id="status">
       <span id="ws-status" class="badge disconnected">disconnected</span>
       <span id="conn-count">0 connections</span>
@@ -24,6 +28,7 @@
   </aside>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
   <script src="/static/js/map.js"></script>
 </body>
 </html>
