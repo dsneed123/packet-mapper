@@ -7,6 +7,8 @@ from typing import Optional
 
 import requests
 
+from ._cache import _BoundedCache
+
 logger = logging.getLogger(__name__)
 
 _PRIVATE_NETWORKS = [
@@ -20,7 +22,7 @@ _PRIVATE_NETWORKS = [
     ipaddress.ip_network("fe80::/10"),
 ]
 
-_GEO_CACHE: dict[str, "GeoLocation"] = {}
+_GEO_CACHE: _BoundedCache = _BoundedCache()
 
 
 @dataclass

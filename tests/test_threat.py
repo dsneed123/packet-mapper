@@ -106,6 +106,42 @@ def test_result_is_cached():
     assert info1 is info2  # same object from cache
 
 
+def test_threat_cache_ttl_expiry():
+    """Cached threat entries are evicted after TTL expires."""
+    from packet_mapper import threat
+    from packet_mapper._cache import TTL
+
+    ip = "11.22.33.44"
+    _clear_cache(ip)
+    with patch("packet_mapper._cache.time.monotonic") as mock_mono:
+        mock_mono.return_value = 0.0
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ABUSEIPDB_API_KEY", None)
+            info = check(ip)
+        assert info is not None
+
+        mock_mono.return_value = TTL - 1  # still within TTL
+        assert ip in threat._THREAT_CACHE
+
+        mock_mono.return_value = TTL + 1  # past TTL
+        assert ip not in threat._THREAT_CACHE
+
+
+def test_threat_cache_max_size():
+    """Cache evicts the oldest entry when max_size is exceeded."""
+    from packet_mapper._cache import _BoundedCache
+
+    cache = _BoundedCache(max_size=3)
+    cache["a"] = "val_a"
+    cache["b"] = "val_b"
+    cache["c"] = "val_c"
+    cache["d"] = "val_d"  # should evict "a"
+
+    assert len(cache._store) == 3
+    assert "a" not in cache._store
+    assert cache["d"] == "val_d"
+
+
 def test_threat_info_as_dict():
     info = ThreatInfo(ip="1.2.3.4", score=75, reports=10, is_flagged=True, source="abuseipdb")
     d = info.as_dict()

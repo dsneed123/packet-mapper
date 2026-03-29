@@ -7,12 +7,13 @@ from typing import Optional
 
 import requests
 
+from ._cache import _BoundedCache
 from .geo import is_private
 
 logger = logging.getLogger(__name__)
 
 # In-memory cache: ip → ThreatInfo
-_THREAT_CACHE: dict[str, "ThreatInfo"] = {}
+_THREAT_CACHE: _BoundedCache = _BoundedCache()
 
 # Built-in blocklist (well-known scanners / honeypot sources) used when no API key is configured
 _LOCAL_BLOCKLIST: frozenset[str] = frozenset({
