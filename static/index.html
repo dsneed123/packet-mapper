@@ -32,6 +32,24 @@
     <ul id="conn-list"></ul>
   </aside>
 
+  <div id="timeline-bar">
+    <div id="tl-controls">
+      <button id="btn-live" class="view-btn active" onclick="setLiveMode()">Live</button>
+      <button id="btn-play" class="view-btn" onclick="togglePlayback()">&#x25B6;</button>
+      <select id="speed-select" onchange="setPlaybackSpeed(this.value)">
+        <option value="0.5">0.5&times;</option>
+        <option value="1" selected>1&times;</option>
+        <option value="2">2&times;</option>
+        <option value="5">5&times;</option>
+        <option value="10">10&times;</option>
+      </select>
+    </div>
+    <span id="tl-start" class="tl-time">&#x2014;</span>
+    <input type="range" id="tl-scrubber" min="0" max="0" value="0" step="1" oninput="onScrub(this.value)" />
+    <span id="tl-end" class="tl-time">&#x2014;</span>
+    <span id="tl-current" class="tl-time">&#x2014;</span>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
   <script src="/static/js/map.js"></script>

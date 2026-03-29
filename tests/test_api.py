@@ -77,6 +77,28 @@ def test_export_csv_empty(client):
     assert len(lines) == 1  # header only
 
 
+def test_timeline_empty(client):
+    import packet_mapper.api as api_mod
+    api_mod._connections.clear()
+    resp = client.get("/api/timeline")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_timeline_with_data(client_with_data):
+    resp = client_with_data.get("/api/timeline")
+    assert resp.status_code == 200
+    records = resp.json()
+    assert len(records) == 1
+    assert "timestamp" in records[0]
+    assert records[0]["type"] == "connection"
+    assert records[0]["connection"]["src_ip"] == "1.2.3.4"
+    assert records[0]["connection"]["dst_ip"] == "5.6.7.8"
+    assert records[0]["dst_geo"]["city"] == "London"
+    assert records[0]["src_threat"] is None
+    assert records[0]["dst_threat"] is None
+
+
 def test_export_csv_with_data(client_with_data):
     resp = client_with_data.get("/api/export/csv")
     assert resp.status_code == 200

@@ -83,8 +83,10 @@ def _on_connection(conn: Connection) -> None:
         (src_threat and src_threat.is_flagged) or (dst_threat and dst_threat.is_flagged)
     )
 
+    ts = time.time()
     payload = {
         "type": "connection",
+        "timestamp": ts,
         "connection": conn.as_dict(),
         "src_geo": src_geo.as_dict() if src_geo else None,
         "dst_geo": dst_geo.as_dict() if dst_geo else None,
@@ -93,16 +95,39 @@ def _on_connection(conn: Connection) -> None:
     }
 
     _connections.append({
-        "timestamp": time.time(),
+        "timestamp": ts,
         "connection": conn,
         "src_geo": src_geo,
         "dst_geo": dst_geo,
+        "src_threat": src_threat,
+        "dst_threat": dst_threat,
         "is_flagged": is_flagged,
     })
 
     loop = asyncio.get_event_loop()
     if loop.is_running():
         asyncio.run_coroutine_threadsafe(_broadcast(payload), loop)
+
+
+@app.get("/api/timeline")
+async def get_timeline():
+    records = []
+    for record in list(_connections):
+        conn = record["connection"]
+        src_geo = record["src_geo"]
+        dst_geo = record["dst_geo"]
+        src_threat = record.get("src_threat")
+        dst_threat = record.get("dst_threat")
+        records.append({
+            "timestamp": record["timestamp"],
+            "type": "connection",
+            "connection": conn.as_dict(),
+            "src_geo": src_geo.as_dict() if src_geo else None,
+            "dst_geo": dst_geo.as_dict() if dst_geo else None,
+            "src_threat": src_threat.as_dict() if src_threat else None,
+            "dst_threat": dst_threat.as_dict() if dst_threat else None,
+        })
+    return JSONResponse(records)
 
 
 @app.get("/api/export/pcap")

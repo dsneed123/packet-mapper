@@ -28,6 +28,19 @@ let heatLayer = null;
 let heatDirty = false;
 let viewMode = 'lines';
 
+// Timeline / playback state
+const timelineData = [];       // [{timestamp, type, connection, src_geo, dst_geo, ...}] sorted by ts
+let timelineMin = 0;
+let timelineMax = 0;
+let playbackTime = 0;
+let liveMode = true;
+let isPlaying = false;
+let playbackSpeed = 1;
+let lastFrameTime = null;
+let playbackAnimFrame = null;
+const playbackLayers = [];     // temporary Leaflet layers added during playback
+const PLAYBACK_WINDOW = 30;    // seconds of history visible during playback
+
 const PROTOCOL_COLORS = {
   HTTP:  '#58a6ff',  // blue
   HTTPS: '#58a6ff',  // blue
@@ -99,6 +112,28 @@ function rebuildHeatLayer() {
 }
 
 function addConnection(data) {
+  // Always track in timeline regardless of live/playback mode
+  const ts = typeof data.timestamp === 'number' ? data.timestamp : Date.now() / 1000;
+  timelineData.push(Object.assign({}, data, { timestamp: ts }));
+  if (!timelineMin) timelineMin = ts;
+  if (ts > timelineMax) {
+    timelineMax = ts;
+    const scrubber = document.getElementById('tl-scrubber');
+    if (scrubber) {
+      scrubber.min = timelineMin;
+      scrubber.max = timelineMax;
+      document.getElementById('tl-start').textContent = fmtTime(timelineMin);
+      document.getElementById('tl-end').textContent = fmtTime(timelineMax);
+      if (liveMode) {
+        scrubber.value = timelineMax;
+        document.getElementById('tl-current').textContent = fmtTime(ts);
+      }
+    }
+  }
+
+  // Don't update live map layers during playback
+  if (!liveMode) return;
+
   const { connection: conn, src_geo: src, dst_geo: dst, src_threat, dst_threat } = data;
   const isFlagged = (src_threat && src_threat.is_flagged) || (dst_threat && dst_threat.is_flagged);
   const lineColor = isFlagged ? '#da3633' : protocolColor(conn.protocol);
@@ -207,6 +242,182 @@ function setViewMode(mode) {
   }
 }
 
+// Timeline helpers
+
+function fmtTime(ts) {
+  if (!ts) return '\u2014';
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function enterPlaybackMode() {
+  if (!liveMode) return;
+  liveMode = false;
+  // Hide live layers so playback layers show cleanly
+  for (const group of connGroups.values()) map.removeLayer(group.line);
+  if (heatLayer && map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
+  document.getElementById('btn-live').classList.remove('active');
+}
+
+function renderPlayback() {
+  // Remove previously rendered playback layers
+  for (const layer of playbackLayers) map.removeLayer(layer);
+  playbackLayers.length = 0;
+
+  if (!timelineData.length) return;
+
+  const windowStart = playbackTime - PLAYBACK_WINDOW;
+
+  // Binary search for first event in window
+  let lo = 0, hi = timelineData.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timelineData[mid].timestamp < windowStart) lo = mid + 1;
+    else hi = mid;
+  }
+
+  for (let i = lo; i < timelineData.length; i++) {
+    const event = timelineData[i];
+    if (event.timestamp > playbackTime) break;
+
+    const { connection: conn, src_geo: src, dst_geo: dst, src_threat, dst_threat } = event;
+    const isFlagged = (src_threat && src_threat.is_flagged) || (dst_threat && dst_threat.is_flagged);
+    const color = isFlagged ? '#da3633' : protocolColor(conn.protocol);
+
+    const pts = [];
+    if (src && !src.is_private) pts.push([src.lat, src.lon]);
+    if (dst && !dst.is_private) pts.push([dst.lat, dst.lon]);
+
+    if (pts.length === 2) {
+      const age = playbackTime - event.timestamp;
+      const opacity = Math.max(0.05, 1 - age / PLAYBACK_WINDOW);
+      const line = L.polyline(pts, { color, weight: 2, opacity });
+      line.addTo(map);
+      playbackLayers.push(line);
+    }
+  }
+}
+
+function updateScrubberPosition() {
+  const scrubber = document.getElementById('tl-scrubber');
+  if (!scrubber || !timelineMax) return;
+  scrubber.value = playbackTime;
+  document.getElementById('tl-current').textContent = fmtTime(playbackTime);
+}
+
+function setLiveMode() {
+  if (isPlaying) stopPlayback();
+
+  // Remove playback layers
+  for (const layer of playbackLayers) map.removeLayer(layer);
+  playbackLayers.length = 0;
+
+  liveMode = true;
+
+  // Restore live layers for current view mode
+  if (viewMode === 'lines') {
+    for (const group of connGroups.values()) {
+      if (!map.hasLayer(group.line)) group.line.addTo(map);
+    }
+  } else if (viewMode === 'heatmap') {
+    if (heatDirty) rebuildHeatLayer();
+    else if (heatLayer && !map.hasLayer(heatLayer)) heatLayer.addTo(map);
+  }
+
+  document.getElementById('btn-live').classList.add('active');
+  document.getElementById('btn-play').innerHTML = '&#x25B6;';
+
+  const scrubber = document.getElementById('tl-scrubber');
+  if (scrubber && timelineMax) {
+    scrubber.value = timelineMax;
+    document.getElementById('tl-current').textContent = fmtTime(timelineMax);
+  }
+}
+
+function onScrub(value) {
+  enterPlaybackMode();
+  stopPlayback();
+  playbackTime = parseFloat(value);
+  renderPlayback();
+  document.getElementById('tl-current').textContent = fmtTime(playbackTime);
+}
+
+function togglePlayback() {
+  if (isPlaying) stopPlayback();
+  else startPlayback();
+}
+
+function startPlayback() {
+  if (!timelineData.length) return;
+  enterPlaybackMode();
+  isPlaying = true;
+  document.getElementById('btn-play').innerHTML = '&#x23F8;';
+  // If at or past the end, restart from the beginning
+  if (playbackTime >= timelineMax) playbackTime = timelineMin;
+  lastFrameTime = null;
+  playbackAnimFrame = requestAnimationFrame(playbackLoop);
+}
+
+function stopPlayback() {
+  isPlaying = false;
+  document.getElementById('btn-play').innerHTML = '&#x25B6;';
+  if (playbackAnimFrame !== null) {
+    cancelAnimationFrame(playbackAnimFrame);
+    playbackAnimFrame = null;
+  }
+  lastFrameTime = null;
+}
+
+function playbackLoop(realTimeMs) {
+  if (!isPlaying) return;
+  if (lastFrameTime !== null) {
+    const elapsed = (realTimeMs - lastFrameTime) / 1000;
+    playbackTime += elapsed * playbackSpeed;
+    if (playbackTime >= timelineMax) {
+      playbackTime = timelineMax;
+      renderPlayback();
+      updateScrubberPosition();
+      stopPlayback();
+      return;
+    }
+    renderPlayback();
+    updateScrubberPosition();
+  }
+  lastFrameTime = realTimeMs;
+  playbackAnimFrame = requestAnimationFrame(playbackLoop);
+}
+
+function setPlaybackSpeed(value) {
+  playbackSpeed = parseFloat(value);
+}
+
+async function loadTimeline() {
+  try {
+    const resp = await fetch('/api/timeline');
+    if (!resp.ok) return;
+    const records = await resp.json();
+    if (!records.length) return;
+    for (const rec of records) {
+      timelineData.push(rec);
+      if (!timelineMin || rec.timestamp < timelineMin) timelineMin = rec.timestamp;
+      if (rec.timestamp > timelineMax) timelineMax = rec.timestamp;
+    }
+    // Ensure sorted order (API returns insertion order which should already be sorted)
+    timelineData.sort((a, b) => a.timestamp - b.timestamp);
+    const scrubber = document.getElementById('tl-scrubber');
+    if (scrubber) {
+      scrubber.min = timelineMin;
+      scrubber.max = timelineMax;
+      scrubber.value = timelineMax;
+      document.getElementById('tl-start').textContent = fmtTime(timelineMin);
+      document.getElementById('tl-end').textContent = fmtTime(timelineMax);
+      document.getElementById('tl-current').textContent = fmtTime(timelineMax);
+    }
+  } catch (e) {
+    console.warn('Timeline load failed', e);
+  }
+}
+
 // WebSocket
 let ws;
 let reconnectDelay = 1000;
@@ -239,3 +450,4 @@ function connect() {
 }
 
 connect();
+loadTimeline();

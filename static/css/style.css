@@ -5,7 +5,7 @@ body {
   background: #0d1117;
   color: #c9d1d9;
   display: grid;
-  grid-template-rows: 48px 1fr;
+  grid-template-rows: 48px 1fr 72px;
   grid-template-columns: 1fr 300px;
   height: 100vh;
   overflow: hidden;
@@ -97,6 +97,49 @@ header h1 { font-size: 1rem; font-weight: 600; color: #58a6ff; }
 #conn-list li .country { color: #3fb950; }
 #conn-list li.threat-entry { border-left: 2px solid #da3633; padding-left: 0.35rem; color: #c9d1d9; }
 #conn-list li .threat-icon { color: #f85149; font-style: normal; }
+
+#timeline-bar {
+  grid-row: 3;
+  grid-column: 1 / -1;
+  background: #161b22;
+  border-top: 1px solid #30363d;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0 1rem;
+}
+
+#tl-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+#speed-select {
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 0.72rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#tl-scrubber {
+  flex: 1;
+  min-width: 0;
+  accent-color: #1f6feb;
+  cursor: pointer;
+}
+
+.tl-time {
+  font-size: 0.65rem;
+  color: #8b949e;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
 
 .threat-badge {
   padding: 2px 8px;
