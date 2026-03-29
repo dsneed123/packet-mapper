@@ -14,9 +14,17 @@ const listEl     = document.getElementById('conn-list');
 
 let totalConns = 0;
 const MAX_LIST  = 50;   // sidebar items to keep
-const MAX_LINES = 200;  // polylines on map before pruning
+const MAX_LINES = 200;  // unique connection groups before pruning
 
-const lines = [];
+// Connection groups: key → { count, line, protocol, fadeTimer }
+const connGroups = new Map();
+const groupOrder = [];  // insertion order for LRU pruning
+
+// Heat map: destination key → { lat, lon, count }
+const heatPoints = new Map();
+let heatLayer = null;
+let heatDirty = false;
+let viewMode = 'lines';
 
 const PROTOCOL_COLORS = {
   HTTP:  '#58a6ff',  // blue
@@ -31,6 +39,14 @@ function protocolColor(protocol) {
   return PROTOCOL_COLORS[protocol] || '#8b949e';
 }
 
+function lineWeight(count) {
+  return Math.min(1.5 + Math.log2(count) * 1.2, 8);
+}
+
+function lineOpacity(count) {
+  return Math.min(0.5 + count * 0.04, 0.95);
+}
+
 function makeMarker(lat, lon, label) {
   return L.circleMarker([lat, lon], {
     radius: 5,
@@ -41,35 +57,90 @@ function makeMarker(lat, lon, label) {
   }).bindTooltip(label, { permanent: false });
 }
 
+function scheduleFade(key) {
+  const group = connGroups.get(key);
+  if (!group) return;
+  if (group.fadeTimer) clearTimeout(group.fadeTimer);
+  group.fadeTimer = setTimeout(() => {
+    const g = connGroups.get(key);
+    if (g) {
+      g.line.setStyle({ opacity: Math.max(lineOpacity(g.count) * 0.35, 0.08) });
+      g.fadeTimer = null;
+    }
+  }, 5000);
+}
+
+function rebuildHeatLayer() {
+  const pts = Array.from(heatPoints.values()).map(p => [p.lat, p.lon, p.count]);
+  if (heatLayer) {
+    heatLayer.setLatLngs(pts);
+  } else {
+    heatLayer = L.heatLayer(pts, {
+      radius: 30,
+      blur: 20,
+      maxZoom: 10,
+      gradient: { 0.4: '#3fb950', 0.6: '#d29922', 0.8: '#f85149' },
+    });
+    if (viewMode === 'heatmap') heatLayer.addTo(map);
+  }
+  heatDirty = false;
+}
+
 function addConnection(data) {
   const { connection: conn, src_geo: src, dst_geo: dst } = data;
 
-  // Draw line between the two geolocated endpoints
   const points = [];
   if (src && !src.is_private) points.push([src.lat, src.lon]);
   if (dst && !dst.is_private) points.push([dst.lat, dst.lon]);
 
   if (points.length === 2) {
-    const line = L.polyline(points, {
-      color: protocolColor(conn.protocol),
-      weight: 1.5,
-      opacity: 0.6,
-    }).addTo(map);
+    const key = `${conn.src_ip}|${conn.dst_ip}`;
 
-    lines.push(line);
-    if (lines.length > MAX_LINES) {
-      const old = lines.shift();
-      map.removeLayer(old);
+    if (connGroups.has(key)) {
+      const group = connGroups.get(key);
+      group.count++;
+      group.line.setStyle({
+        weight:  lineWeight(group.count),
+        opacity: lineOpacity(group.count),
+      });
+      scheduleFade(key);
+    } else {
+      const line = L.polyline(points, {
+        color:   protocolColor(conn.protocol),
+        weight:  lineWeight(1),
+        opacity: lineOpacity(1),
+      });
+
+      if (viewMode === 'lines') line.addTo(map);
+
+      connGroups.set(key, { count: 1, line, protocol: conn.protocol, fadeTimer: null });
+      groupOrder.push(key);
+      scheduleFade(key);
+
+      if (groupOrder.length > MAX_LINES) {
+        const oldKey = groupOrder.shift();
+        const old = connGroups.get(oldKey);
+        if (old) {
+          if (old.fadeTimer) clearTimeout(old.fadeTimer);
+          map.removeLayer(old.line);
+          connGroups.delete(oldKey);
+        }
+      }
     }
 
-    // Animate fade-out
-    setTimeout(() => {
-      line.setStyle({ opacity: 0.2 });
-    }, 5000);
-  }
+    // Accumulate heat map data at destination
+    if (dst && !dst.is_private) {
+      const hKey = `${dst.lat},${dst.lon}`;
+      const existing = heatPoints.get(hKey) || { lat: dst.lat, lon: dst.lon, count: 0 };
+      existing.count++;
+      heatPoints.set(hKey, existing);
+      heatDirty = true;
+      if (viewMode === 'heatmap') rebuildHeatLayer();
+    }
 
-  if (src && !src.is_private) makeMarker(src.lat, src.lon, `${src.ip} (${src.city || src.country})`).addTo(map);
-  if (dst && !dst.is_private) makeMarker(dst.lat, dst.lon, `${dst.ip} (${dst.city || dst.country})`).addTo(map);
+    if (src && !src.is_private) makeMarker(src.lat, src.lon, `${src.ip} (${src.city || src.country})`).addTo(map);
+    if (dst && !dst.is_private) makeMarker(dst.lat, dst.lon, `${dst.ip} (${dst.city || dst.country})`).addTo(map);
+  }
 
   // Sidebar entry
   totalConns++;
@@ -83,6 +154,29 @@ function addConnection(data) {
 
   while (listEl.children.length > MAX_LIST) {
     listEl.lastChild.remove();
+  }
+}
+
+function setViewMode(mode) {
+  if (viewMode === mode) return;
+  viewMode = mode;
+
+  document.getElementById('btn-lines').classList.toggle('active', mode === 'lines');
+  document.getElementById('btn-heatmap').classList.toggle('active', mode === 'heatmap');
+
+  if (mode === 'lines') {
+    if (heatLayer) {
+      map.removeLayer(heatLayer);
+      heatLayer = null;
+    }
+    for (const group of connGroups.values()) {
+      group.line.addTo(map);
+    }
+  } else {
+    for (const group of connGroups.values()) {
+      map.removeLayer(group.line);
+    }
+    if (heatPoints.size > 0) rebuildHeatLayer();
   }
 }
 
