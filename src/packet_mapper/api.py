@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -30,6 +31,8 @@ _clients: set[WebSocket] = set()
 # Key: interface name, or "" for the default/all-interface capture
 _captures: dict[str, PacketCapture] = {}
 _connections: collections.deque = collections.deque(maxlen=10_000)
+_connections_lock = threading.Lock()
+_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _iface_key(interface: str | None) -> str:
@@ -72,7 +75,8 @@ async def index():
 
 @app.get("/health")
 async def health():
-    flagged = sum(1 for r in list(_connections) if r.get("is_flagged"))
+    with _connections_lock:
+        flagged = sum(1 for r in _connections if r.get("is_flagged"))
     active = [k if k else "default" for k, v in _captures.items() if v._running]
     return {"status": "ok", "clients": len(_clients), "flagged_connections": flagged, "active_interfaces": active}
 
@@ -134,20 +138,20 @@ def _make_on_connection(interface: str | None):
             "dst_threat": dst_threat.as_dict() if dst_threat else None,
         }
 
-        _connections.append({
-            "timestamp": ts,
-            "interface": iface_name,
-            "connection": conn,
-            "src_geo": src_geo,
-            "dst_geo": dst_geo,
-            "src_threat": src_threat,
-            "dst_threat": dst_threat,
-            "is_flagged": is_flagged,
-        })
+        with _connections_lock:
+            _connections.append({
+                "timestamp": ts,
+                "interface": iface_name,
+                "connection": conn,
+                "src_geo": src_geo,
+                "dst_geo": dst_geo,
+                "src_threat": src_threat,
+                "dst_threat": dst_threat,
+                "is_flagged": is_flagged,
+            })
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.run_coroutine_threadsafe(_broadcast(payload), loop)
+        if _loop is not None and _loop.is_running():
+            asyncio.run_coroutine_threadsafe(_broadcast(payload), _loop)
 
     return _on_connection
 
@@ -191,8 +195,10 @@ async def stop_capture(request: Request):
 
 @app.get("/api/timeline")
 async def get_timeline():
+    with _connections_lock:
+        snapshot = list(_connections)
     records = []
-    for record in list(_connections):
+    for record in snapshot:
         conn = record["connection"]
         src_geo = record["src_geo"]
         dst_geo = record["dst_geo"]
@@ -241,7 +247,9 @@ async def export_csv():
     writer.writerow(
         ["timestamp", "src_ip", "dst_ip", "protocol", "src_port", "dst_port", "country", "city", "hostname"]
     )
-    for record in list(_connections):
+    with _connections_lock:
+        snapshot = list(_connections)
+    for record in snapshot:
         conn = record["connection"]
         dst_geo = record["dst_geo"]
         ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record["timestamp"]))
@@ -266,7 +274,8 @@ async def export_csv():
 
 @app.on_event("startup")
 async def startup():
-    global _captures
+    global _captures, _loop
+    _loop = asyncio.get_running_loop()
     interface = os.environ.get("PACKET_MAPPER_IFACE") or None
     key = _iface_key(interface)
     capture = PacketCapture(interface=interface)
