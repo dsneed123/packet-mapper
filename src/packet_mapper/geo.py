@@ -65,7 +65,7 @@ def lookup(ip: str, timeout: int = 3) -> Optional[GeoLocation]:
 
     try:
         resp = requests.get(
-            f"http://ip-api.com/json/{ip}",
+            f"https://ip-api.com/json/{ip}",
             params={"fields": "status,lat,lon,city,country,isp"},
             timeout=timeout,
         )
