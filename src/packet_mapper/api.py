@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .capture import Connection, PacketCapture
 from .geo import lookup
+from .threat import check as threat_check
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,8 @@ async def index():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "clients": len(_clients)}
+    flagged = sum(1 for r in list(_connections) if r.get("is_flagged"))
+    return {"status": "ok", "clients": len(_clients), "flagged_connections": flagged}
 
 
 @app.websocket("/ws")
@@ -75,11 +77,19 @@ def _on_connection(conn: Connection) -> None:
     if (src_geo is None or src_geo.is_private) and (dst_geo is None or dst_geo.is_private):
         return
 
+    src_threat = threat_check(conn.src_ip)
+    dst_threat = threat_check(conn.dst_ip)
+    is_flagged = bool(
+        (src_threat and src_threat.is_flagged) or (dst_threat and dst_threat.is_flagged)
+    )
+
     payload = {
         "type": "connection",
         "connection": conn.as_dict(),
         "src_geo": src_geo.as_dict() if src_geo else None,
         "dst_geo": dst_geo.as_dict() if dst_geo else None,
+        "src_threat": src_threat.as_dict() if src_threat else None,
+        "dst_threat": dst_threat.as_dict() if dst_threat else None,
     }
 
     _connections.append({
@@ -87,6 +97,7 @@ def _on_connection(conn: Connection) -> None:
         "connection": conn,
         "src_geo": src_geo,
         "dst_geo": dst_geo,
+        "is_flagged": is_flagged,
     })
 
     loop = asyncio.get_event_loop()

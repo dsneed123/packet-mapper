@@ -95,3 +95,18 @@ header h1 { font-size: 1rem; font-weight: 600; color: #58a6ff; }
 
 #conn-list li .proto { color: #58a6ff; font-weight: 600; }
 #conn-list li .country { color: #3fb950; }
+#conn-list li.threat-entry { border-left: 2px solid #da3633; padding-left: 0.35rem; color: #c9d1d9; }
+#conn-list li .threat-icon { color: #f85149; font-style: normal; }
+
+.threat-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: #3d0000;
+  color: #8b949e;
+}
+.threat-badge.active {
+  background: #5a0000;
+  color: #f85149;
+}

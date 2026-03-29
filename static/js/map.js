@@ -8,11 +8,13 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   maxZoom: 19,
 }).addTo(map);
 
-const statusEl   = document.getElementById('ws-status');
-const countEl    = document.getElementById('conn-count');
-const listEl     = document.getElementById('conn-list');
+const statusEl      = document.getElementById('ws-status');
+const countEl       = document.getElementById('conn-count');
+const listEl        = document.getElementById('conn-list');
+const threatCountEl = document.getElementById('threat-count');
 
 let totalConns = 0;
+let threatConns = 0;
 const MAX_LIST  = 50;   // sidebar items to keep
 const MAX_LINES = 200;  // unique connection groups before pruning
 
@@ -47,14 +49,24 @@ function lineOpacity(count) {
   return Math.min(0.5 + count * 0.04, 0.95);
 }
 
-function makeMarker(lat, lon, label) {
+function makeMarker(lat, lon, label, threatened = false) {
+  const color = threatened ? '#da3633' : '#58a6ff';
   return L.circleMarker([lat, lon], {
-    radius: 5,
-    color: '#58a6ff',
-    fillColor: '#58a6ff',
+    radius: threatened ? 6 : 5,
+    color,
+    fillColor: color,
     fillOpacity: 0.8,
     weight: 1,
   }).bindTooltip(label, { permanent: false });
+}
+
+function threatLabel(geo, threat) {
+  let label = `${geo.ip} (${geo.city || geo.country})`;
+  if (threat && threat.is_flagged) {
+    label += ` ⚠ Threat score: ${threat.score}`;
+    if (threat.reports > 0) label += ` (${threat.reports} reports)`;
+  }
+  return label;
 }
 
 function scheduleFade(key) {
@@ -87,7 +99,9 @@ function rebuildHeatLayer() {
 }
 
 function addConnection(data) {
-  const { connection: conn, src_geo: src, dst_geo: dst } = data;
+  const { connection: conn, src_geo: src, dst_geo: dst, src_threat, dst_threat } = data;
+  const isFlagged = (src_threat && src_threat.is_flagged) || (dst_threat && dst_threat.is_flagged);
+  const lineColor = isFlagged ? '#da3633' : protocolColor(conn.protocol);
 
   const points = [];
   if (src && !src.is_private) points.push([src.lat, src.lon]);
@@ -106,14 +120,14 @@ function addConnection(data) {
       scheduleFade(key);
     } else {
       const line = L.polyline(points, {
-        color:   protocolColor(conn.protocol),
+        color:   lineColor,
         weight:  lineWeight(1),
         opacity: lineOpacity(1),
       });
 
       if (viewMode === 'lines') line.addTo(map);
 
-      connGroups.set(key, { count: 1, line, protocol: conn.protocol, fadeTimer: null });
+      connGroups.set(key, { count: 1, line, protocol: conn.protocol, isFlagged, fadeTimer: null });
       groupOrder.push(key);
       scheduleFade(key);
 
@@ -138,18 +152,31 @@ function addConnection(data) {
       if (viewMode === 'heatmap') rebuildHeatLayer();
     }
 
-    if (src && !src.is_private) makeMarker(src.lat, src.lon, `${src.ip} (${src.city || src.country})`).addTo(map);
-    if (dst && !dst.is_private) makeMarker(dst.lat, dst.lon, `${dst.ip} (${dst.city || dst.country})`).addTo(map);
+    if (src && !src.is_private) {
+      makeMarker(src.lat, src.lon, threatLabel(src, src_threat), !!(src_threat && src_threat.is_flagged)).addTo(map);
+    }
+    if (dst && !dst.is_private) {
+      makeMarker(dst.lat, dst.lon, threatLabel(dst, dst_threat), !!(dst_threat && dst_threat.is_flagged)).addTo(map);
+    }
   }
 
   // Sidebar entry
   totalConns++;
   countEl.textContent = `${totalConns} connections`;
 
+  if (isFlagged) {
+    threatConns++;
+    threatCountEl.textContent = `${threatConns} threats`;
+    threatCountEl.className = 'threat-badge active';
+  }
+
   const li = document.createElement('li');
+  if (isFlagged) li.classList.add('threat-entry');
   const dstLabel = dst ? `${dst.ip} <span class="country">${dst.country}</span>` : conn.dst_ip;
   const extra = conn.dns_query ? ` ${conn.dns_query}` : (conn.http_host ? ` ${conn.http_host}` : '');
-  li.innerHTML = `<span class="proto" style="color:${protocolColor(conn.protocol)}">${conn.protocol}</span> ${conn.src_ip} → ${dstLabel}${extra}`;
+  const warn = isFlagged ? ' <span class="threat-icon">⚠</span>' : '';
+  const protoColor = isFlagged ? '#da3633' : protocolColor(conn.protocol);
+  li.innerHTML = `<span class="proto" style="color:${protoColor}">${conn.protocol}</span>${warn} ${conn.src_ip} → ${dstLabel}${extra}`;
   listEl.prepend(li);
 
   while (listEl.children.length > MAX_LIST) {
