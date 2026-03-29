@@ -19,6 +19,23 @@
   <div id="map"></div>
 
   <aside id="sidebar">
+    <div id="filter-bar">
+      <input type="text" id="search-input" placeholder="Search IP / host…" autocomplete="off" spellcheck="false" />
+      <div id="filter-protocols">
+        <label><input type="checkbox" value="HTTP"  checked> HTTP</label>
+        <label><input type="checkbox" value="HTTPS" checked> HTTPS</label>
+        <label><input type="checkbox" value="DNS"   checked> DNS</label>
+        <label><input type="checkbox" value="ICMP"  checked> ICMP</label>
+        <label><input type="checkbox" value="UDP"   checked> UDP</label>
+        <label><input type="checkbox" value="TCP"   checked> TCP</label>
+      </div>
+      <div id="filter-row">
+        <select id="filter-country">
+          <option value="">All countries</option>
+        </select>
+        <input type="number" id="filter-port" placeholder="Port" min="1" max="65535" />
+      </div>
+    </div>
     <h2>Recent Connections</h2>
     <ul id="conn-list"></ul>
   </aside>
