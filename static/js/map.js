@@ -18,6 +18,19 @@ const MAX_LINES = 200;  // polylines on map before pruning
 
 const lines = [];
 
+const PROTOCOL_COLORS = {
+  HTTP:  '#58a6ff',  // blue
+  HTTPS: '#58a6ff',  // blue
+  DNS:   '#3fb950',  // green
+  ICMP:  '#f85149',  // red
+  UDP:   '#d29922',  // yellow
+  TCP:   '#c9d1d9',  // white
+};
+
+function protocolColor(protocol) {
+  return PROTOCOL_COLORS[protocol] || '#8b949e';
+}
+
 function makeMarker(lat, lon, label) {
   return L.circleMarker([lat, lon], {
     radius: 5,
@@ -38,7 +51,7 @@ function addConnection(data) {
 
   if (points.length === 2) {
     const line = L.polyline(points, {
-      color: '#58a6ff',
+      color: protocolColor(conn.protocol),
       weight: 1.5,
       opacity: 0.6,
     }).addTo(map);
@@ -64,7 +77,8 @@ function addConnection(data) {
 
   const li = document.createElement('li');
   const dstLabel = dst ? `${dst.ip} <span class="country">${dst.country}</span>` : conn.dst_ip;
-  li.innerHTML = `<span class="proto">${conn.protocol}</span> ${conn.src_ip} → ${dstLabel}`;
+  const extra = conn.dns_query ? ` ${conn.dns_query}` : (conn.http_host ? ` ${conn.http_host}` : '');
+  li.innerHTML = `<span class="proto" style="color:${protocolColor(conn.protocol)}">${conn.protocol}</span> ${conn.src_ip} → ${dstLabel}${extra}`;
   listEl.prepend(li);
 
   while (listEl.children.length > MAX_LIST) {

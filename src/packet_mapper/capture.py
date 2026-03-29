@@ -1,12 +1,44 @@
 """Packet capture using scapy, emitting connection events."""
 
-import asyncio
 import logging
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+_HTTP_METHODS = (b"GET ", b"POST ", b"PUT ", b"DELETE ", b"HEAD ", b"OPTIONS ", b"PATCH ")
+
+
+def _extract_http_host(pkt) -> Optional[str]:
+    """Parse the HTTP Host header from a raw TCP payload, if present."""
+    try:
+        from scapy.packet import Raw
+
+        if Raw not in pkt:
+            return None
+        payload = pkt[Raw].load
+        if not payload.startswith(_HTTP_METHODS):
+            return None
+        for line in payload.split(b"\r\n"):
+            if line.lower().startswith(b"host:"):
+                return line[5:].strip().decode("ascii", errors="replace")
+    except Exception:
+        pass
+    return None
+
+
+def _parse_dns_query(pkt) -> Optional[str]:
+    """Extract the first question name from a DNS query packet, or None."""
+    try:
+        from scapy.layers.dns import DNS
+
+        dns = pkt[DNS]
+        if dns.qr == 0 and dns.qd is not None:  # qr=0 → query
+            return dns.qd.qname.decode("ascii", errors="replace").rstrip(".")
+    except Exception:
+        pass
+    return None
 
 
 @dataclass
@@ -16,6 +48,8 @@ class Connection:
     protocol: str
     src_port: Optional[int] = None
     dst_port: Optional[int] = None
+    dns_query: Optional[str] = None
+    http_host: Optional[str] = None
 
     def as_dict(self) -> dict:
         return {
@@ -24,6 +58,8 @@ class Connection:
             "protocol": self.protocol,
             "src_port": self.src_port,
             "dst_port": self.dst_port,
+            "dns_query": self.dns_query,
+            "http_host": self.http_host,
         }
 
 
@@ -45,7 +81,8 @@ class PacketCapture:
 
     def _handle_packet(self, pkt) -> None:
         try:
-            from scapy.layers.inet import IP, TCP, UDP
+            from scapy.layers.dns import DNS
+            from scapy.layers.inet import ICMP, IP, TCP, UDP
             from scapy.layers.inet6 import IPv6
 
             if IP in pkt:
@@ -57,14 +94,39 @@ class PacketCapture:
             else:
                 return
 
-            if TCP in pkt:
+            if ICMP in pkt:
+                conn = Connection(src_ip=src, dst_ip=dst, protocol="ICMP")
+            elif DNS in pkt:
+                sport = pkt[UDP].sport if UDP in pkt else (pkt[TCP].sport if TCP in pkt else None)
+                dport = pkt[UDP].dport if UDP in pkt else (pkt[TCP].dport if TCP in pkt else None)
                 conn = Connection(
                     src_ip=src,
                     dst_ip=dst,
-                    protocol="TCP",
-                    src_port=pkt[TCP].sport,
-                    dst_port=pkt[TCP].dport,
+                    protocol="DNS",
+                    src_port=sport,
+                    dst_port=dport,
+                    dns_query=_parse_dns_query(pkt),
                 )
+            elif TCP in pkt:
+                sport = pkt[TCP].sport
+                dport = pkt[TCP].dport
+                if dport in (80, 8080) or sport in (80, 8080):
+                    conn = Connection(
+                        src_ip=src,
+                        dst_ip=dst,
+                        protocol="HTTP",
+                        src_port=sport,
+                        dst_port=dport,
+                        http_host=_extract_http_host(pkt),
+                    )
+                elif dport == 443 or sport == 443:
+                    conn = Connection(
+                        src_ip=src, dst_ip=dst, protocol="HTTPS", src_port=sport, dst_port=dport
+                    )
+                else:
+                    conn = Connection(
+                        src_ip=src, dst_ip=dst, protocol="TCP", src_port=sport, dst_port=dport
+                    )
             elif UDP in pkt:
                 conn = Connection(
                     src_ip=src,
